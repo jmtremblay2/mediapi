@@ -5,6 +5,9 @@ __pycache__/
 # uv / virtualenv
 .venv/
 
+# Real per-deployment config / secrets
+.env
+
 # Flask session signing key -- generated per-deployment, must stay secret
 instance/secret_key
 

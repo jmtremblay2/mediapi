@@ -4,7 +4,7 @@ After=local-fs.target
 
 [Service]
 Type=simple
-User=jm
+User=${MEDIAPI_USER}
 SupplementaryGroups=video render
 RuntimeDirectory=mediapi
 RuntimeDirectoryMode=0770

@@ -5,9 +5,9 @@ Wants=network-online.target mediapi-mpv.service
 
 [Service]
 Type=simple
-User=jm
-WorkingDirectory=/home/jm/mediapi
-ExecStart=/home/jm/.local/bin/uv run run.py
+User=${MEDIAPI_USER}
+WorkingDirectory=${PROJECT_DIR}
+ExecStart=${UV} run run.py
 Restart=on-failure
 RestartSec=2
 
