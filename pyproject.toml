@@ -1,0 +1,8 @@
+[project]
+name = "mediapi"
+version = "0.1.0"
+description = "Local media browser + HDMI playback remote control"
+requires-python = ">=3.11"
+dependencies = [
+    "flask>=3",
+]

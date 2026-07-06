@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>mediapi</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div class="app">
+    <div class="mode-bar">
+      <button id="mode-control" class="mode-btn active">Control</button>
+      <button id="mode-playback" class="mode-btn">Playback</button>
+    </div>
+
+    <div id="panel-control" class="panel">
+      <div class="browse-toolbar">
+        <button id="btn-up" disabled>&larr; Up</button>
+        <button id="btn-play-folder" disabled>Play this folder</button>
+      </div>
+      <div id="listing" class="listing"></div>
+    </div>
+
+    <div id="panel-playback" class="panel hidden">
+      <p id="player-offline" class="offline hidden">Player offline</p>
+      <div id="player-online">
+        <p id="now-playing" class="filename">&mdash;</p>
+        <div class="progress-row">
+          <span id="time-pos">0:00</span>
+          <input id="seek-slider" type="range" min="0" max="0" step="1" disabled>
+          <span id="time-dur">0:00</span>
+        </div>
+        <div class="transport-row">
+          <button id="btn-back30">&laquo; 30</button>
+          <button id="btn-playpause">Play/Pause</button>
+          <button id="btn-fwd30">30 &raquo;</button>
+        </div>
+        <div class="volume-row">
+          <span>Vol</span>
+          <input id="volume-slider" type="range" min="0" max="100" step="1">
+        </div>
+        <label class="keep-playing-row">
+          <input type="checkbox" id="keep-playing-checkbox">
+          Keep playing
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

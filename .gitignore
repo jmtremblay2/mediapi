@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# uv / virtualenv
+.venv/
+
+# Flask session signing key -- generated per-deployment, must stay secret
+instance/secret_key
+
+# Local Claude Code settings
+.claude/

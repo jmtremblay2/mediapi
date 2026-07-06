@@ -1,0 +1,24 @@
+[Unit]
+Description=mpv persistent player (DRM/HDMI output, JSON IPC)
+After=local-fs.target
+
+[Service]
+Type=simple
+User=jm
+SupplementaryGroups=video render
+RuntimeDirectory=mediapi
+RuntimeDirectoryMode=0770
+ExecStart=/usr/bin/mpv \
+  --idle=yes \
+  --input-ipc-server=/run/mediapi/mpv.sock \
+  --vo=gpu-next --gpu-context=drm \
+  --hwdec=auto-safe \
+  --fullscreen \
+  --no-terminal \
+  --keep-open=no \
+  --ao=alsa
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
