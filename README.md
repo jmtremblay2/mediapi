@@ -9,11 +9,18 @@ Two remotes are configured; GitHub is just a mirror of the Forgejo repo.
 * `origin` (primary) — `ssh://forgejo@forgejo.jmopines.com:2222/jm/mediapi.git`
 * `github` (mirror)  — `git@github.com:jmtremblay2/mediapi.git`
 
-Push to both with:
+`origin` is set up with two push URLs (forgejo + github), so a single
+`git push` mirrors to both. Fetch still comes from forgejo only.
 
 ```bash
-git push origin master
-git push github master
+git push origin master   # pushes to forgejo AND github
+```
+
+To re-create the dual-push setup on a fresh clone:
+
+```bash
+git remote set-url --add --push origin ssh://forgejo@forgejo.jmopines.com:2222/jm/mediapi.git
+git remote set-url --add --push origin git@github.com:jmtremblay2/mediapi.git
 ```
 
 # AP on the raspberry pi
