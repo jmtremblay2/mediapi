@@ -1,6 +1,11 @@
 [Unit]
 Description=mpv persistent player (DRM/HDMI output, JSON IPC)
-After=local-fs.target
+# Wait until udev has settled so the DRM/HDMI devices (/dev/dri/*) exist
+# before mpv tries to grab the display. Without this, a cold-boot race can
+# leave mpv running but never rendering to HDMI (you see the console instead),
+# even though the exact same command works when run by hand later.
+After=local-fs.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
 
 [Service]
 Type=simple
