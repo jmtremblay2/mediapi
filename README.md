@@ -2,6 +2,20 @@ hardware: raspberry pi 4 4GB ram
 os: raspberry pi os lite (64 bits)
 use-cas:  almost always offline. except when doing maintenance
 
+## Git remotes
+
+Two remotes are configured; GitHub is just a mirror of the Forgejo repo.
+
+* `origin` (primary) — `ssh://forgejo@forgejo.jmopines.com:2222/jm/mediapi.git`
+* `github` (mirror)  — `git@github.com:jmtremblay2/mediapi.git`
+
+Push to both with:
+
+```bash
+git push origin master
+git push github master
+```
+
 # AP on the raspberry pi
 * must have access point that boots up on system boot
 * ssid: mediapipi, pw: mediapipi
