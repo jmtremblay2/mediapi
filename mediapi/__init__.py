@@ -18,7 +18,11 @@ def create_app():
 
     register_auth_gate(app)
 
-    app.player = PlayerStateManager(app.config["MPV_SOCKET"], app.config["VIDEO_EXTENSIONS"])
+    app.player = PlayerStateManager(
+        app.config["MPV_SOCKET"],
+        app.config["VIDEO_EXTENSIONS"],
+        mirror_glob=app.config.get("MPV_MIRROR_GLOB"),
+    )
     app.player.start()
 
     return app

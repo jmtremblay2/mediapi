@@ -42,7 +42,7 @@ def load_secret_key():
 
     On a read-only overlay filesystem the write will fail; in that case we
     fall back to an ephemeral in-memory key so the app still starts (sessions
-    just won't survive a restart). deploy.sh generates this file while the
+    just won't survive a restart). install.sh generates this file while the
     card is writable, so in normal operation the write path isn't hit."""
     if os.path.exists(SECRET_KEY_PATH):
         with open(SECRET_KEY_PATH) as f:
@@ -76,6 +76,10 @@ class Config:
         p for p in os.environ.get("MEDIAPI_MEDIA_ROOTS", "/localmedia").split(":") if p
     ]
     MPV_SOCKET = os.environ.get("MEDIAPI_MPV_SOCKET", "/run/mediapi/mpv.sock")
+    # Extra mpv instances (one per additional HDMI screen) expose sockets named
+    # mpv-mirror-<connector>.sock alongside the primary socket. The player
+    # discovers them by glob and echoes playback commands to them best-effort.
+    MPV_MIRROR_GLOB = os.path.join(os.path.dirname(MPV_SOCKET), "mpv-mirror-*.sock")
     PORT = int(os.environ.get("MEDIAPI_PORT", "8080"))
 
     VIDEO_EXTENSIONS = {

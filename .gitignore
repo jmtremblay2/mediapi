@@ -8,8 +8,10 @@ __pycache__/
 # Real per-deployment config / secrets
 .env
 
-# Flask session signing key -- generated per-deployment, must stay secret
-instance/secret_key
+# Flask instance dir -- per-deployment state generated on the Pi:
+#   secret_key    session signing key (must stay secret)
+#   deployed_ref  commit of the last healthy deploy (install.sh rollback target)
+instance/
 
 # Local Claude Code settings
 .claude/

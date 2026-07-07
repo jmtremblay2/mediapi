@@ -13,15 +13,12 @@ User=${MEDIAPI_USER}
 SupplementaryGroups=video render
 RuntimeDirectory=mediapi
 RuntimeDirectoryMode=0770
-ExecStart=/usr/bin/mpv \
-  --idle=yes \
-  --input-ipc-server=/run/mediapi/mpv.sock \
-  --vo=gpu-next --gpu-context=drm \
-  --hwdec=auto-safe \
-  --fullscreen \
-  --no-terminal \
-  --keep-open=no \
-  --ao=alsa
+# start-mpv.py enumerates the connected HDMI connectors and launches one mpv
+# per screen: the primary carries audio + the app's IPC socket, and each extra
+# screen gets a video-only mirror mpv on its own socket. If any mpv dies the
+# launcher exits non-zero and systemd restarts us, which re-enumerates the
+# displays. See the script header for the full rationale.
+ExecStart=/usr/bin/python3 ${PROJECT_DIR}/scripts/start-mpv.py
 Restart=on-failure
 RestartSec=2
 
