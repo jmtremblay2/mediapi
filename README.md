@@ -134,19 +134,16 @@ screen (`--hwdec=auto-safe` falls back to software if the HW decoder is busy).
 sudo apt update
 sudo apt install -y mpv
 
-# mpv needs access to the GPU/DRM devices to render to HDMI
-# (use the MEDIAPI_USER from your .env)
-sudo usermod -aG video,render "$USER"
-# log out/in (or reboot) for the new group membership to take effect
-
 # install uv (Python package/venv manager) if not already present
 curl -LsSf https://astral.sh/uv/install.sh | sh   # installs to ~/.local/bin/uv
 
 # create your .env (see Configuration above)
 cp .env.example .env && $EDITOR .env
 
-# deploy the currently-checked-out ref: syncs deps, configures the AP,
-# installs+starts the services
+# deploy the currently-checked-out ref: syncs deps, adds the service user to
+# the video+render groups (GPU/DRM access for HDMI), configures the AP,
+# installs+starts the services. Run as your normal user -- NOT with sudo, or
+# the services get rendered to run as root.
 ./install.sh
 
 # verify

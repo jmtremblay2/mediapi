@@ -116,6 +116,14 @@ deploy_current() {
     chmod 600 instance/secret_key
   fi
 
+  # The mpv service runs as MEDIAPI_USER and needs the video+render groups to
+  # reach the GPU/DRM devices for HDMI output. Idempotent; systemd picks up the
+  # new membership when it (re)starts the service below, so no logout needed.
+  if ! id -nG "${MEDIAPI_USER}" | tr ' ' '\n' | grep -qx render; then
+    echo "==> Adding '${MEDIAPI_USER}' to video,render groups ..."
+    sudo usermod -aG video,render "${MEDIAPI_USER}"
+  fi
+
   echo "==> Applying WiFi country + AP config ..."
   sudo raspi-config nonint do_wifi_country "${MEDIAPI_WIFI_COUNTRY}"
   if nmcli -g NAME con show | grep -qx "${MEDIAPI_AP_CONN_NAME}"; then
