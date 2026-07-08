@@ -1,4 +1,3 @@
-import glob
 import logging
 import os
 import threading
@@ -19,17 +18,12 @@ class PlayerStateManager:
     Flask request handlers only ever read the cached snapshot or send a
     command through this class -- they never touch the socket directly."""
 
-    def __init__(self, socket_path, video_extensions, mirror_glob=None):
+    def __init__(self, socket_path, video_extensions):
         self.socket_path = socket_path
         self.video_extensions = video_extensions
-        # Sockets of any per-screen "mirror" mpv instances (see start-mpv.py).
-        # We only ever push playback commands to these best-effort; the primary
-        # socket above is the sole source of state and the one that carries
-        # audio, so a missing/broken mirror just means one screen is dark.
-        self._mirror_glob = mirror_glob
-        self._mirror_clients = {}
-        self._mirror_lock = threading.Lock()
-
+        # A single mpv drives every HDMI output (the X session mirrors the
+        # screens with xrandr -- see scripts/mediapi-session.sh), so there is
+        # exactly one socket to talk to.
         self._client = MpvIPCClient(socket_path)
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -137,7 +131,6 @@ class PlayerStateManager:
                 self._client.command("loadfile", next_file, "replace")
             except MpvIPCError as exc:
                 log.warning("auto-advance loadfile failed: %s", exc)
-            self._broadcast("loadfile", next_file, "replace")
 
     # -- public read API ---------------------------------------------------
 
@@ -147,37 +140,10 @@ class PlayerStateManager:
             state["keep_playing"] = self._state["keep_playing"]
         return state
 
-    # -- mirror screens (best-effort) --------------------------------------
-
-    def _broadcast(self, *command_args):
-        """Echo a playback command to every mirror mpv, best-effort. Never
-        raises: a mirror that's absent, mid-restart, or wedged must not affect
-        the primary screen or the HTTP response. Mirrors are re-synced on every
-        loadfile, so a command missed here self-heals at the next video."""
-        if not self._mirror_glob:
-            return
-        with self._mirror_lock:
-            paths = set(glob.glob(self._mirror_glob))
-            # Drop clients whose socket disappeared (display unplugged).
-            for gone in set(self._mirror_clients) - paths:
-                self._mirror_clients.pop(gone).close()
-            for path in paths:
-                client = self._mirror_clients.get(path)
-                if client is None:
-                    client = self._mirror_clients[path] = MpvIPCClient(path)
-                try:
-                    if not client.connected:
-                        client.connect()
-                    client.command(*command_args)
-                except (OSError, MpvIPCError) as exc:
-                    client.close()
-                    log.debug("mirror %s command failed: %s", path, exc)
-
     # -- public command API (called from Flask routes) ---------------------
 
     def play_file(self, path):
         self._client.command("loadfile", path, "replace")
-        self._broadcast("loadfile", path, "replace")
         # Build the auto-advance queue from the containing folder, positioned
         # at the file just started -- so "keep playing" continues through the
         # rest of the folder even when you start from the middle.
@@ -199,7 +165,6 @@ class PlayerStateManager:
         if not files:
             raise ValueError(f"no video files in {folder_path}")
         self._client.command("loadfile", files[0], "replace")
-        self._broadcast("loadfile", files[0], "replace")
         with self._lock:
             self._queue_folder = folder_path
             self._queue_files = files
@@ -207,11 +172,9 @@ class PlayerStateManager:
 
     def playpause(self):
         self._client.command("cycle", "pause")
-        self._broadcast("cycle", "pause")
 
     def seek(self, offset_seconds):
         self._client.command("seek", offset_seconds, "relative")
-        self._broadcast("seek", offset_seconds, "relative")
 
     def set_volume(self, value):
         value = max(0, min(100, value))

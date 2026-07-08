@@ -117,12 +117,26 @@ deploy_current() {
   fi
 
   # The mpv service runs as MEDIAPI_USER and needs the video+render groups to
-  # reach the GPU/DRM devices for HDMI output. Idempotent; systemd picks up the
-  # new membership when it (re)starts the service below, so no logout needed.
+  # reach the GPU/DRM devices for HDMI output, plus tty+input to own the VT and
+  # read input under X. Idempotent; systemd picks up the new membership when it
+  # (re)starts the service below, so no logout needed.
   if ! id -nG "${MEDIAPI_USER}" | tr ' ' '\n' | grep -qx render; then
-    echo "==> Adding '${MEDIAPI_USER}' to video,render groups ..."
-    sudo usermod -aG video,render "${MEDIAPI_USER}"
+    echo "==> Adding '${MEDIAPI_USER}' to video,render,input,tty groups ..."
+    sudo usermod -aG video,render,input,tty "${MEDIAPI_USER}"
   fi
+
+  # The player runs a minimal X server so a single mpv can be mirrored across
+  # both HDMI outputs (one DRM master; two separate mpv on the shared vc4 card
+  # cannot -- see scripts/mediapi-session.sh). Install just the X server + xinit
+  # + xrandr, and allow the non-root service user to start X on its VT.
+  if ! command -v Xorg >/dev/null 2>&1; then
+    echo "==> Installing minimal X server (xserver-xorg-core, xinit, xrandr) ..."
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      xserver-xorg-core xinit x11-xserver-utils
+  fi
+  echo "==> Configuring /etc/X11/Xwrapper.config (allow non-root X on the VT) ..."
+  printf 'allowed_users=anybody\nneeds_root_rights=yes\n' \
+    | sudo tee /etc/X11/Xwrapper.config >/dev/null
 
   echo "==> Applying WiFi country + AP config ..."
   sudo raspi-config nonint do_wifi_country "${MEDIAPI_WIFI_COUNTRY}"

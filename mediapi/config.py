@@ -75,11 +75,9 @@ class Config:
     MEDIA_ROOTS = [
         p for p in os.environ.get("MEDIAPI_MEDIA_ROOTS", "/localmedia").split(":") if p
     ]
+    # A single mpv drives every HDMI output -- the X session mirrors the screens
+    # with xrandr (see scripts/mediapi-session.sh) -- so there is one socket.
     MPV_SOCKET = os.environ.get("MEDIAPI_MPV_SOCKET", "/run/mediapi/mpv.sock")
-    # Extra mpv instances (one per additional HDMI screen) expose sockets named
-    # mpv-mirror-<connector>.sock alongside the primary socket. The player
-    # discovers them by glob and echoes playback commands to them best-effort.
-    MPV_MIRROR_GLOB = os.path.join(os.path.dirname(MPV_SOCKET), "mpv-mirror-*.sock")
     PORT = int(os.environ.get("MEDIAPI_PORT", "8080"))
 
     VIDEO_EXTENSIONS = {

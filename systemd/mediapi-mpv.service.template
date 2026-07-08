@@ -1,24 +1,28 @@
 [Unit]
-Description=mpv persistent player (DRM/HDMI output, JSON IPC)
-# Wait until udev has settled so the DRM/HDMI devices (/dev/dri/*) exist
-# before mpv tries to grab the display. Without this, a cold-boot race can
-# leave mpv running but never rendering to HDMI (you see the console instead),
-# even though the exact same command works when run by hand later.
+Description=mediapi player (X kiosk: one mpv mirrored across all HDMI outputs)
+# Wait until udev has settled so the DRM/HDMI devices (/dev/dri/*) exist before
+# X tries to grab them. Without this a cold-boot race can leave X unable to find
+# a screen. (systemd-udev-settle is deprecated but still the simplest reliable
+# gate here; the session script additionally waits for connectors to appear.)
 After=local-fs.target systemd-udev-settle.service
 Wants=systemd-udev-settle.service
 
 [Service]
 Type=simple
 User=${MEDIAPI_USER}
-SupplementaryGroups=video render
+# video+render: GPU/DRM access. input: evdev under X. tty: own the VT for X.
+SupplementaryGroups=video render input tty
+# A controlling tty so the X server can take over VT 7.
+TTYPath=/dev/tty7
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
 RuntimeDirectory=mediapi
 RuntimeDirectoryMode=0770
-# start-mpv.py enumerates the connected HDMI connectors and launches one mpv
-# per screen: the primary carries audio + the app's IPC socket, and each extra
-# screen gets a video-only mirror mpv on its own socket. If any mpv dies the
-# launcher exits non-zero and systemd restarts us, which re-enumerates the
-# displays. See the script header for the full rationale.
-ExecStart=/usr/bin/python3 ${PROJECT_DIR}/scripts/start-mpv.py
+# xinit starts the X server on VT 7 and runs the session script as its client.
+# The session mirrors the HDMI outputs (single DRM master) and execs one mpv.
+# Non-root X is permitted via /etc/X11/Xwrapper.config (installed by install.sh).
+ExecStart=/usr/bin/xinit ${PROJECT_DIR}/scripts/mediapi-session.sh -- :0 vt7 -nolisten tcp -keeptty
 Restart=on-failure
 RestartSec=2
 

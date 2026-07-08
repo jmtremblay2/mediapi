@@ -111,26 +111,27 @@ Keep values simple (no spaces / shell-special characters).
 ## Setup (mediapi app)
 
 Implemented as a small Flask app (`mediapi/`) + a permanently-running `mpv`
-player controlled over its JSON IPC socket. mpv renders video to HDMI
-directly (DRM/KMS, no desktop needed); the phone browser only shows
-metadata/controls, never the video image itself.
+player controlled over its JSON IPC socket. mpv renders video to HDMI; the
+phone browser only shows metadata/controls, never the video image itself.
 
-**Dual-HDMI mirroring.** A single mpv on DRM can only drive one connector, and
-the Pi's `vc4-kms` driver can't clone two HDMI outputs onto one framebuffer —
-so mirroring is done by running *one mpv per connected screen*.
-`scripts/start-mpv.py` (launched by the `mediapi-mpv` unit) enumerates the
-connected HDMI connectors and starts a **primary** mpv (audio + the app's IPC
-socket, `mpv.sock`) plus a **mirror** mpv per extra screen (video-only, on
-`mpv-mirror-<connector>.sock`). The app plays/pauses/seeks the primary and
-echoes those to the mirrors best-effort, re-syncing on every video. One screen
-→ same as before; a dead mirror just leaves that screen dark, never the audio
-screen. Because each screen runs its own mpv, the same file decodes once per
-screen (`--hwdec=auto-safe` falls back to software if the HW decoder is busy).
+**Dual-HDMI mirroring.** The Pi 4's two HDMI connectors share a single vc4 DRM
+card, and DRM *master* is exclusive per card — so two independent mpv processes
+can't both drive a screen (the second gets `Failed to acquire DRM master`).
+Instead the `mediapi-mpv` unit runs a minimal **X server** via `xinit`
+(`scripts/mediapi-session.sh`): X is the one DRM master, `xrandr --same-as`
+clones the first output's framebuffer onto every other connected HDMI output,
+and a **single** fullscreen mpv renders into it — so the same frames appear on
+both screens, decoded once. mpv carries audio and the app's only IPC socket
+(`/run/mediapi/mpv.sock`); `--hwdec=v4l2m2m-copy` uses the Pi's hardware H.264/
+HEVC decoder (~⅓ the CPU of software decoding), falling back to software for
+codecs it can't handle. The session waits for connectors to probe as connected
+before mirroring, so a cold-boot HDMI race doesn't drop it to one screen. One
+screen attached → just that screen, no config needed.
 
 ### First-time install (on the Pi)
 
 ```bash
-# system deps: mpv for HDMI/DRM playback
+# system deps: mpv for playback (install.sh installs the minimal X server itself)
 sudo apt update
 sudo apt install -y mpv
 
@@ -196,13 +197,18 @@ Notes / things to double check on the actual hardware (couldn't be verified
 from a dev machine):
 * `dtoverlay=vc4-kms-v3d` should already be set in `/boot/firmware/config.txt`
   on current Bookworm Pi4 images (needed for DRM output) — worth a quick check.
-* Mirroring picks up whatever HDMI connectors read `connected` under
-  `/sys/class/drm/card*-HDMI-*/status` at service start — so plug in both
-  screens **before** `mediapi-mpv` starts (or `sudo systemctl restart
-  mediapi-mpv` after). Check what it launched with
-  `sudo journalctl -u mediapi-mpv | grep start-mpv` and confirm both sockets:
-  `ls -l /run/mediapi/mpv*.sock`. `mpv --drm-connector=help` (with a display
-  attached) lists the connector names if the sysfs guess is ever wrong.
+* Mirroring clones every HDMI output that reads `connected` at session start
+  onto the first. The session waits for connectors to probe (cold-boot race),
+  then runs `xrandr --same-as`. See what it did with
+  `sudo journalctl -u mediapi-mpv | grep mediapi-session`; inspect the outputs
+  live with `DISPLAY=:0 xrandr` (as the service user). Both screens should share
+  a common resolution; if they differ, `xrandr` clones at the first output's
+  mode. Confirm the one socket: `ls -l /run/mediapi/mpv.sock`.
+* Non-root X requires `/etc/X11/Xwrapper.config` with `allowed_users=anybody`
+  (install.sh writes it). If the service crash-loops with `Could not create
+  server lock file: /tmp/.X0-lock`, a previous X died uncleanly — remove
+  `/tmp/.X0-lock` (and `/tmp/.X11-unix/X0`) and restart. The X log is at
+  `~/.local/share/xorg/Xorg.0.log`.
 * If audio doesn't come out of the TV, check `aplay -l` for the HDMI ALSA
   device name (usually `vc4-hdmi`) and add e.g.
   `--audio-device=alsa/plughw:CARD=vc4hdmi0,DEV=0` to the mpv unit template, or
