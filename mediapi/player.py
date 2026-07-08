@@ -194,6 +194,25 @@ class PlayerStateManager:
         if pid is not None:
             self._kodi.call("Player.PlayPause", playerid=pid)
 
+    def skip(self, delta):
+        """Jump to another clip in the current folder queue (+1 next, -1
+        previous). No-op at the ends, or when nothing is queued."""
+        with self._lock:
+            if not self._queue_files:
+                return
+            new_index = self._queue_index + delta
+            if new_index < 0 or new_index >= len(self._queue_files):
+                return
+            self._queue_index = new_index
+            target = self._queue_files[new_index]
+        self._open(target)
+
+    def next(self):
+        self.skip(1)
+
+    def previous(self):
+        self.skip(-1)
+
     def seek(self, offset_seconds):
         pid = self._active_player_id()
         if pid is not None:

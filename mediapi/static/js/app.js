@@ -120,6 +120,14 @@
     api("/api/control/playpause", { method: "POST" });
   });
 
+  el("btn-prev").addEventListener("click", () => {
+    api("/api/control/previous", { method: "POST" });
+  });
+
+  el("btn-next").addEventListener("click", () => {
+    api("/api/control/next", { method: "POST" });
+  });
+
   el("btn-back30").addEventListener("click", () => {
     api("/api/control/seek", { method: "POST", body: JSON.stringify({ offset: -30 }) });
   });

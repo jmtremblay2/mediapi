@@ -57,6 +57,24 @@ def playpause():
     return jsonify({"ok": True})
 
 
+@bp.route("/control/next", methods=["POST"])
+def next_clip():
+    try:
+        current_app.player.next()
+    except KodiError as exc:
+        return jsonify({"error": f"player unavailable: {exc}"}), 503
+    return jsonify({"ok": True})
+
+
+@bp.route("/control/previous", methods=["POST"])
+def previous_clip():
+    try:
+        current_app.player.previous()
+    except KodiError as exc:
+        return jsonify({"error": f"player unavailable: {exc}"}), 503
+    return jsonify({"ok": True})
+
+
 @bp.route("/control/seek", methods=["POST"])
 def seek():
     body = request.get_json(force=True, silent=True) or {}
