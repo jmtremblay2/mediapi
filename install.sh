@@ -154,6 +154,16 @@ deploy_current() {
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends kodi
   fi
 
+  # Ensure the media browse roots exist so browsing works and there's a place to
+  # copy content into. (mkdir -p is a no-op if it's already a mount point.)
+  IFS=':' read -ra _media_roots <<< "${MEDIAPI_MEDIA_ROOTS:-/localmedia}"
+  for r in "${_media_roots[@]}"; do
+    [[ -n "$r" && ! -d "$r" ]] || continue
+    echo "==> Creating media root $r ..."
+    sudo mkdir -p "$r"
+    sudo chown "${MEDIAPI_USER}:${MEDIAPI_USER}" "$r"
+  done
+
   echo "==> Applying WiFi country + AP config ..."
   sudo raspi-config nonint do_wifi_country "${MEDIAPI_WIFI_COUNTRY}"
   if nmcli -g NAME con show | grep -qx "${MEDIAPI_AP_CONN_NAME}"; then
@@ -191,6 +201,23 @@ deploy_current() {
   echo "==> Starting services ..."
   sudo systemctl restart mediapi-kodi
   sudo systemctl restart mediapi-app
+
+  # Route Kodi's audio to HDMI. Kodi otherwise defaults to the Pi's analog jack
+  # (bcm2835 Headphones). Done live over JSON-RPC once Kodi's web server is up
+  # (more robust than seeding guisettings, since Kodi validates the device).
+  local kodi_url="http://${MEDIAPI_KODI_USER:-kodi}:${MEDIAPI_KODI_PASSWORD:-kodi}@127.0.0.1:${MEDIAPI_KODI_PORT:-8090}/jsonrpc"
+  local audio_dev="${MEDIAPI_KODI_AUDIO_DEVICE:-ALSA:hdmi:CARD=vc4hdmi0,DEV=0|vc4-hdmi-0}"
+  echo "==> Setting Kodi audio output to HDMI ..."
+  for _ in $(seq 1 30); do
+    if curl -fsS --max-time 3 "$kodi_url" -H 'content-type: application/json' \
+         -d '{"jsonrpc":"2.0","id":1,"method":"JSONRPC.Ping"}' 2>/dev/null | grep -q pong; then
+      curl -fsS --max-time 5 "$kodi_url" -H 'content-type: application/json' \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Settings.SetSettingValue\",\"params\":{\"setting\":\"audiooutput.audiodevice\",\"value\":\"${audio_dev}\"}}" >/dev/null \
+        && echo "    audio -> ${audio_dev}" || echo "    WARNING: could not set Kodi audio device"
+      break
+    fi
+    sleep 1
+  done
 }
 
 # --- health check ---------------------------------------------------
