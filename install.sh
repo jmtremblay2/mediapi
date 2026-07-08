@@ -41,9 +41,12 @@ DEPLOYED_REF_FILE="instance/deployed_ref"
 TARGET_REF="${1:-}"
 
 # --- load config ----------------------------------------------------
+# First run on a fresh Pi may have no .env yet -- seed it from the example so the
+# script can proceed, but make it loud: the defaults ship an insecure AP.
 if [[ ! -f .env ]]; then
-  echo "ERROR: .env not found. Copy .env.example to .env and fill it in." >&2
-  exit 1
+  echo "WARNING: .env not found -- creating it from .env.example." >&2
+  echo "         Edit .env with your real AP/login/Kodi passwords, then re-run." >&2
+  cp .env.example .env
 fi
 set -a
 # shellcheck disable=SC1091
@@ -52,7 +55,7 @@ set +a
 
 MEDIAPI_USER="${MEDIAPI_USER:-$(id -un)}"
 MEDIAPI_PORT="${MEDIAPI_PORT:-8080}"
-UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+UV=""  # set by bootstrap_system once uv is installed
 
 # --- 0. refuse to run on a read-only overlay ------------------------
 if findmnt -no FSTYPE / | grep -q overlay; then
@@ -90,9 +93,30 @@ if [[ -n "$PREV_GOOD" && "$PREV_GOOD" != "$CURRENT_REF" ]]; then
   echo "    (last healthy deploy was $PREV_GOOD -- rollback target if this fails)"
 fi
 
+# --- system bootstrap (fresh Pi: assume ONLY git is installed) -------
+# Installs everything else the deploy needs so a bare Raspberry Pi OS Lite goes
+# from "git clone + ./install.sh" to a working player. NetworkManager (nmcli)
+# and raspi-config already ship on Pi OS. Sets the global UV path afterwards.
+bootstrap_system() {
+  echo "==> apt update + base packages (curl, python3) ..."
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl ca-certificates python3
+
+  if ! command -v uv >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/uv" ]]; then
+    echo "==> Installing uv ..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+  if [[ ! -x "$UV" ]]; then
+    echo "ERROR: uv is still not available at '$UV' after install." >&2
+    exit 1
+  fi
+}
+
 # --- render + install systemd units (used again on rollback) --------
 install_units() {
-  for unit in mediapi-mpv mediapi-app; do
+  for unit in mediapi-kodi mediapi-app; do
     sed -e "s|\${MEDIAPI_USER}|${MEDIAPI_USER}|g" \
         -e "s|\${PROJECT_DIR}|${PROJECT_DIR}|g" \
         -e "s|\${UV}|${UV}|g" \
@@ -116,27 +140,19 @@ deploy_current() {
     chmod 600 instance/secret_key
   fi
 
-  # The mpv service runs as MEDIAPI_USER and needs the video+render groups to
-  # reach the GPU/DRM devices for HDMI output, plus tty+input to own the VT and
-  # read input under X. Idempotent; systemd picks up the new membership when it
-  # (re)starts the service below, so no logout needed.
+  # Kodi (the player) runs as MEDIAPI_USER on GBM/KMS and needs these groups to
+  # reach the GPU/DRM, audio, input and console devices. Idempotent; systemd
+  # picks up the new membership when it (re)starts the service below.
   if ! id -nG "${MEDIAPI_USER}" | tr ' ' '\n' | grep -qx render; then
-    echo "==> Adding '${MEDIAPI_USER}' to video,render,input,tty groups ..."
-    sudo usermod -aG video,render,input,tty "${MEDIAPI_USER}"
+    echo "==> Adding '${MEDIAPI_USER}' to video,render,input,audio,tty groups ..."
+    sudo usermod -aG video,render,input,audio,tty "${MEDIAPI_USER}"
   fi
 
-  # The player runs a minimal X server so a single mpv can be mirrored across
-  # both HDMI outputs (one DRM master; two separate mpv on the shared vc4 card
-  # cannot -- see scripts/mediapi-session.sh). Install just the X server + xinit
-  # + xrandr, and allow the non-root service user to start X on its VT.
-  if ! command -v Xorg >/dev/null 2>&1; then
-    echo "==> Installing minimal X server (xserver-xorg-core, xinit, xrandr) ..."
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      xserver-xorg-core xinit x11-xserver-utils
+  # Install Kodi (the actual media player -- mediapi just drives it via JSON-RPC).
+  if ! command -v kodi-standalone >/dev/null 2>&1; then
+    echo "==> Installing Kodi ..."
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends kodi
   fi
-  echo "==> Configuring /etc/X11/Xwrapper.config (allow non-root X on the VT) ..."
-  printf 'allowed_users=anybody\nneeds_root_rights=yes\n' \
-    | sudo tee /etc/X11/Xwrapper.config >/dev/null
 
   echo "==> Applying WiFi country + AP config ..."
   sudo raspi-config nonint do_wifi_country "${MEDIAPI_WIFI_COUNTRY}"
@@ -156,10 +172,24 @@ deploy_current() {
       ipv4.method shared
   fi
 
-  echo "==> Installing systemd units + restarting services ..."
+  echo "==> Installing systemd units ..."
   install_units
-  sudo systemctl enable mediapi-mpv mediapi-app >/dev/null 2>&1 || true
-  sudo systemctl restart mediapi-mpv
+  sudo systemctl enable mediapi-kodi mediapi-app >/dev/null 2>&1 || true
+
+  # Enable Kodi's JSON-RPC web server so mediapi can control it. Kodi rewrites
+  # guisettings.xml on exit, so seed it while Kodi is stopped, then start.
+  KODI_HOME="$(eval echo "~${MEDIAPI_USER}")/.kodi"
+  echo "==> Enabling Kodi web server (JSON-RPC) on port ${MEDIAPI_KODI_PORT:-8090} ..."
+  sudo systemctl stop mediapi-kodi 2>/dev/null || true
+  sudo -u "${MEDIAPI_USER}" mkdir -p "${KODI_HOME}/userdata"
+  sudo -u "${MEDIAPI_USER}" \
+    MEDIAPI_KODI_PORT="${MEDIAPI_KODI_PORT:-8090}" \
+    MEDIAPI_KODI_USER="${MEDIAPI_KODI_USER:-kodi}" \
+    MEDIAPI_KODI_PASSWORD="${MEDIAPI_KODI_PASSWORD:-kodi}" \
+    python3 "${PROJECT_DIR}/scripts/configure-kodi.py" "${KODI_HOME}/userdata/guisettings.xml"
+
+  echo "==> Starting services ..."
+  sudo systemctl restart mediapi-kodi
   sudo systemctl restart mediapi-app
 }
 
@@ -175,6 +205,7 @@ app_healthy() {
 }
 
 # --- 2-6. deploy ----------------------------------------------------
+bootstrap_system
 deploy_current
 
 # --- 7. health check + rollback ------------------------------------
@@ -182,7 +213,7 @@ echo "==> Health check on http://127.0.0.1:${MEDIAPI_PORT}/login ..."
 if app_healthy; then
   echo "$CURRENT_REF" > "$DEPLOYED_REF_FILE"
   echo "==> Deploy OK. $CURRENT_DESC healthy on port ${MEDIAPI_PORT}."
-  systemctl --no-pager --lines=0 status mediapi-mpv mediapi-app || true
+  systemctl --no-pager --lines=0 status mediapi-kodi mediapi-app || true
   exit 0
 fi
 

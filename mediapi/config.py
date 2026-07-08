@@ -75,9 +75,14 @@ class Config:
     MEDIA_ROOTS = [
         p for p in os.environ.get("MEDIAPI_MEDIA_ROOTS", "/localmedia").split(":") if p
     ]
-    # A single mpv drives every HDMI output -- the X session mirrors the screens
-    # with xrandr (see scripts/mediapi-session.sh) -- so there is one socket.
-    MPV_SOCKET = os.environ.get("MEDIAPI_MPV_SOCKET", "/run/mediapi/mpv.sock")
+    # Kodi does the playback; we drive it over its JSON-RPC HTTP endpoint.
+    # Kodi's web server must be enabled (install.sh configures this) and should
+    # be on a different port than this app. Defaults match install.sh.
+    KODI_HOST = os.environ.get("MEDIAPI_KODI_HOST", "127.0.0.1")
+    KODI_PORT = int(os.environ.get("MEDIAPI_KODI_PORT", "8090"))
+    KODI_USER = os.environ.get("MEDIAPI_KODI_USER", "kodi")
+    KODI_PASSWORD = os.environ.get("MEDIAPI_KODI_PASSWORD", "kodi")
+    KODI_URL = f"http://{KODI_HOST}:{KODI_PORT}/jsonrpc"
     PORT = int(os.environ.get("MEDIAPI_PORT", "8080"))
 
     VIDEO_EXTENSIONS = {

@@ -1,0 +1,25 @@
+[Unit]
+Description=Kodi media center (standalone, GBM/KMS -- the actual player)
+# Needs the DRM/HDMI + sound devices present; takes over the console VT.
+After=local-fs.target systemd-udev-settle.service sound.target
+Wants=systemd-udev-settle.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=${MEDIAPI_USER}
+# Kodi on GBM needs: video+render (GPU/DRM), input (remotes/keyboard), audio
+# (HDMI/ALSA), tty (own the VT). PAMName=login gives it a real session so it
+# can take the seat's devices.
+SupplementaryGroups=video render input audio tty dialout
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+# kodi-standalone launches Kodi and relaunches it if it exits from the UI.
+ExecStart=/usr/bin/kodi-standalone
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

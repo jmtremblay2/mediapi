@@ -2,6 +2,7 @@ from flask import Flask
 
 from .auth import register_auth_gate
 from .config import Config
+from .kodi import KodiClient
 from .player import PlayerStateManager
 from .routes.api_routes import bp as api_bp
 from .routes.auth_routes import bp as auth_bp
@@ -18,10 +19,12 @@ def create_app():
 
     register_auth_gate(app)
 
-    app.player = PlayerStateManager(
-        app.config["MPV_SOCKET"],
-        app.config["VIDEO_EXTENSIONS"],
+    kodi = KodiClient(
+        app.config["KODI_URL"],
+        username=app.config["KODI_USER"],
+        password=app.config["KODI_PASSWORD"],
     )
+    app.player = PlayerStateManager(kodi, app.config["VIDEO_EXTENSIONS"])
     app.player.start()
 
     return app

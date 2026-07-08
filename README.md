@@ -110,46 +110,45 @@ Keep values simple (no spaces / shell-special characters).
 
 ## Setup (mediapi app)
 
-Implemented as a small Flask app (`mediapi/`) + a permanently-running `mpv`
-player controlled over its JSON IPC socket. mpv renders video to HDMI; the
-phone browser only shows metadata/controls, never the video image itself.
+Playback is done by **Kodi** (`mediapi-kodi` unit), running standalone on
+GBM/KMS straight on the hardware — the same smooth, hardware-decoded path as
+LibreELEC, no desktop. mediapi itself is a small Flask app (`mediapi/`) that is
+just the phone-facing **remote**: it browses the media folders and drives Kodi
+over its **JSON-RPC HTTP API** (`Player.Open`, `Player.PlayPause`,
+`Player.Seek`, `Application.SetVolume`, `Player.GetProperties`). The phone
+browser only shows metadata/controls, never the video image itself.
 
-**Dual-HDMI mirroring.** The Pi 4's two HDMI connectors share a single vc4 DRM
-card, and DRM *master* is exclusive per card — so two independent mpv processes
-can't both drive a screen (the second gets `Failed to acquire DRM master`).
-Instead the `mediapi-mpv` unit runs a minimal **X server** via `xinit`
-(`scripts/mediapi-session.sh`): X is the one DRM master, `xrandr --same-as`
-clones the first output's framebuffer onto every other connected HDMI output,
-and a **single** fullscreen mpv renders into it — so the same frames appear on
-both screens, decoded once. mpv carries audio and the app's only IPC socket
-(`/run/mediapi/mpv.sock`); `--hwdec=v4l2m2m-copy` uses the Pi's hardware H.264/
-HEVC decoder (~⅓ the CPU of software decoding), falling back to software for
-codecs it can't handle. The session waits for connectors to probe as connected
-before mirroring, so a cold-boot HDMI race doesn't drop it to one screen. One
-screen attached → just that screen, no config needed.
+Kodi handles decode, HDMI audio and display; mediapi keeps a background poll of
+Kodi's player state (position/duration/pause/volume) and drives "keep playing"
+auto-advance through a folder. `install.sh` installs Kodi, autostarts it, and
+enables its web server (JSON-RPC) headlessly by seeding `guisettings.xml` (see
+`scripts/configure-kodi.py`). Set the Kodi port/credentials in `.env`
+(`MEDIAPI_KODI_*`); keep the port different from `MEDIAPI_PORT`.
+
+> **Dual HDMI:** the Pi 4 can't cleanly mirror both HDMI ports in software
+> (DRM master is exclusive per card; the X-mirror path can't keep up). Drive
+> both car screens from one HDMI port through an external powered HDMI splitter.
 
 ### First-time install (on the Pi)
 
 ```bash
-# system deps: mpv for playback (install.sh installs the minimal X server itself)
-sudo apt update
-sudo apt install -y mpv
-
 # install uv (Python package/venv manager) if not already present
 curl -LsSf https://astral.sh/uv/install.sh | sh   # installs to ~/.local/bin/uv
 
 # create your .env (see Configuration above)
 cp .env.example .env && $EDITOR .env
 
-# deploy the currently-checked-out ref: syncs deps, adds the service user to
-# the video+render groups (GPU/DRM access for HDMI), configures the AP,
-# installs+starts the services. Run as your normal user -- NOT with sudo, or
-# the services get rendered to run as root.
+# deploy the currently-checked-out ref: installs Kodi + Python deps, enables
+# Kodi's JSON-RPC web server, configures the AP, installs+starts the services.
+# Run as your normal user -- NOT with sudo, or the services get rendered to run
+# as root.
 ./install.sh
 
 # verify
-systemctl status mediapi-mpv mediapi-app
-ls -l /run/mediapi/mpv.sock
+systemctl status mediapi-kodi mediapi-app
+curl -s "http://kodi:$(grep KODI_PASSWORD .env|cut -d= -f2)@127.0.0.1:8090/jsonrpc" \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"JSONRPC.Ping"}'   # -> {"result":"pong"}
 ```
 
 Then, from a phone connected to the AP (`MEDIAPI_AP_SSID`), browse to
@@ -193,25 +192,20 @@ cd ~/mediapi && ./install.sh v1.2.0
 sudo raspi-config nonint do_overlayfs 0 && sudo reboot   # re-enable overlay
 ```
 
-Notes / things to double check on the actual hardware (couldn't be verified
-from a dev machine):
+Notes / things to double check on the actual hardware:
 * `dtoverlay=vc4-kms-v3d` should already be set in `/boot/firmware/config.txt`
-  on current Bookworm Pi4 images (needed for DRM output) — worth a quick check.
-* Mirroring clones every HDMI output that reads `connected` at session start
-  onto the first. The session waits for connectors to probe (cold-boot race),
-  then runs `xrandr --same-as`. See what it did with
-  `sudo journalctl -u mediapi-mpv | grep mediapi-session`; inspect the outputs
-  live with `DISPLAY=:0 xrandr` (as the service user). Both screens should share
-  a common resolution; if they differ, `xrandr` clones at the first output's
-  mode. Confirm the one socket: `ls -l /run/mediapi/mpv.sock`.
-* Non-root X requires `/etc/X11/Xwrapper.config` with `allowed_users=anybody`
-  (install.sh writes it). If the service crash-loops with `Could not create
-  server lock file: /tmp/.X0-lock`, a previous X died uncleanly — remove
-  `/tmp/.X0-lock` (and `/tmp/.X11-unix/X0`) and restart. The X log is at
-  `~/.local/share/xorg/Xorg.0.log`.
-* If audio doesn't come out of the TV, check `aplay -l` for the HDMI ALSA
-  device name (usually `vc4-hdmi`) and add e.g.
-  `--audio-device=alsa/plughw:CARD=vc4hdmi0,DEV=0` to the mpv unit template, or
-  run `sudo raspi-config nonint do_audio 2` to force HDMI as the default output.
+  on current Pi4 images (needed for KMS output) — worth a quick check.
+* Kodi runs standalone on GBM as the `mediapi-kodi` service (on `tty1`). If the
+  screen stays on the console, check `sudo journalctl -u mediapi-kodi`; Kodi's
+  own log is at `~/.kodi/temp/kodi.log`. It needs the service user in the
+  `video render input audio tty` groups (install.sh adds them).
+* If the web API is unreachable (`Connection refused` on
+  `:${MEDIAPI_KODI_PORT}`), the web server didn't get enabled. Kodi rewrites
+  `guisettings.xml` on exit, so re-run `install.sh` (it stops Kodi, seeds the
+  setting via `scripts/configure-kodi.py`, and restarts), or toggle
+  Settings → Services → Control → *Allow remote control via HTTP* in the Kodi
+  GUI once. Verify with `JSONRPC.Ping` (see install snippet above).
+* Kodi handles HDMI audio itself (Settings → System → Audio). If there's no
+  sound, set the audio output device to the HDMI sink there.
 
 To stop/remove: `sudo systemctl disable --now mediapi-mpv mediapi-app`
