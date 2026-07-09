@@ -75,14 +75,10 @@ class Config:
     MEDIA_ROOTS = [
         p for p in os.environ.get("MEDIAPI_MEDIA_ROOTS", "/localmedia").split(":") if p
     ]
-    # Kodi does the playback; we drive it over its JSON-RPC HTTP endpoint.
-    # Kodi's web server must be enabled (install.sh configures this) and should
-    # be on a different port than this app. Defaults match install.sh.
-    KODI_HOST = os.environ.get("MEDIAPI_KODI_HOST", "127.0.0.1")
-    KODI_PORT = int(os.environ.get("MEDIAPI_KODI_PORT", "8090"))
-    KODI_USER = os.environ.get("MEDIAPI_KODI_USER", "kodi")
-    KODI_PASSWORD = os.environ.get("MEDIAPI_KODI_PASSWORD", "kodi")
-    KODI_URL = f"http://{KODI_HOST}:{KODI_PORT}/jsonrpc"
+    # mpv does the playback; we drive it over its JSON IPC Unix socket. mpv runs
+    # as its own systemd service with --input-ipc-server pointed at this path
+    # (install.sh configures this).
+    MPV_SOCKET = os.environ.get("MEDIAPI_MPV_SOCKET", "/run/mediapi/mpv.sock")
     PORT = int(os.environ.get("MEDIAPI_PORT", "8080"))
 
     VIDEO_EXTENSIONS = {

@@ -1,0 +1,38 @@
+[Unit]
+Description=mpv video player (KMS/DRM -- the actual player)
+# Needs the DRM/HDMI + sound devices present; takes over the console VT.
+After=local-fs.target systemd-udev-settle.service sound.target
+Wants=systemd-udev-settle.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=${MEDIAPI_USER}
+# mpv on DRM/KMS needs: video+render (GPU/DRM), input (remotes/keyboard), audio
+# (HDMI/ALSA), tty (own the VT). PAMName=login gives it a real logind session so
+# it can take the seat's DRM/input devices.
+SupplementaryGroups=video render input audio tty
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+# Create /run/mediapi (owned by this user) for the IPC socket the app connects to.
+RuntimeDirectory=mediapi
+# --idle keeps mpv running with no file loaded (holds the playlist between
+# clips and after the last one), so the service stays up and the app can always
+# reach the socket. Playback is hardware-decoded straight on KMS.
+ExecStart=/usr/bin/mpv \
+  --idle=yes \
+  --input-ipc-server=/run/mediapi/mpv.sock \
+  --no-terminal \
+  --no-input-default-bindings \
+  --fullscreen \
+  --force-window=yes \
+  --keep-open=no \
+  --vo=gpu --gpu-context=drm --hwdec=auto \
+  --ao=alsa --audio-device=alsa/hdmi:CARD=vc4hdmi0,DEV=0
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

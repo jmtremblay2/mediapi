@@ -3,32 +3,29 @@ import os
 import threading
 import time
 
-from .kodi import KodiConnectionError, KodiError, seconds_from_time
 from .media import list_video_files
+from .mpv import MpvConnectionError, MpvError
 
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 1.0
 RECONNECT_INTERVAL = 2.0
 
-# Kodi's video playlist id (Playlist.GetPlaylists: 0=audio, 1=video, 2=picture).
-VIDEO_PLAYLIST_ID = 1
-
 
 class PlayerStateManager:
-    """Controls Kodi over JSON-RPC and caches its playback state.
+    """Controls mpv over its JSON IPC socket and caches its playback state.
 
-    Playback is driven through Kodi's own PLAYLIST: playing a file or folder
-    loads the whole folder into Kodi's video playlist and starts it. Kodi then
-    advances through the folder (and loops it, when "keep playing" is on) ALL BY
-    ITSELF -- so playback keeps going even if this app, the phone, or the WiFi
-    disconnect. mediapi only issues commands and polls state; it is never in the
-    playback loop. Next/Previous are Kodi playlist navigation; "keep playing" is
-    Kodi's repeat mode.
+    Playback is driven through mpv's own PLAYLIST: playing a file or folder
+    loads the whole folder into mpv's playlist and jumps to the chosen entry.
+    mpv then advances through the folder (and loops it, when "keep playing" is
+    on) ALL BY ITSELF -- so playback keeps going even if this app, the phone, or
+    the WiFi disconnect. mediapi only issues commands and polls state; it is
+    never in the playback loop. Next/Previous are mpv playlist navigation; "keep
+    playing" is mpv's `loop-playlist`.
     """
 
-    def __init__(self, kodi_client, video_extensions):
-        self._kodi = kodi_client
+    def __init__(self, mpv_client, video_extensions):
+        self._mpv = mpv_client
         self.video_extensions = video_extensions
 
         self._lock = threading.Lock()
@@ -55,65 +52,47 @@ class PlayerStateManager:
     def stop(self):
         self._stop.set()
 
-    # -- background loop (status only; Kodi owns auto-advance) -------------
+    # -- background loop (status only; mpv owns auto-advance) --------------
 
     def _run(self):
         while not self._stop.is_set():
             try:
                 self._poll_once()
-            except KodiConnectionError as exc:
-                log.debug("kodi not reachable: %s", exc)
+            except MpvConnectionError as exc:
+                log.debug("mpv not reachable: %s", exc)
                 self._set_disconnected()
                 time.sleep(RECONNECT_INTERVAL)
                 continue
-            except KodiError as exc:
-                log.warning("kodi poll error: %s", exc)
+            except MpvError as exc:
+                log.warning("mpv poll error: %s", exc)
             time.sleep(POLL_INTERVAL)
 
     def _set_disconnected(self):
         with self._lock:
             self._state["connected"] = False
 
-    def _active_player(self):
-        """Return the active player dict ({playerid, type}) or None if idle."""
-        players = self._kodi.call("Player.GetActivePlayers")
-        for p in players or []:
-            if p.get("type") in ("video", "audio"):
-                return p
-        return players[0] if players else None
-
-    def _active_player_id(self):
-        player = self._active_player()
-        return player["playerid"] if player else None
+    def _has_media(self):
+        """True if mpv currently has a file loaded (not idle). Raises
+        MpvConnectionError if mpv is unreachable."""
+        return self._mpv.try_get("path") is not None
 
     def _poll_once(self):
-        player = self._active_player()  # raises KodiConnectionError if down
+        # `path` is unavailable while mpv sits idle; try_get returns None then.
+        # A genuine socket failure raises MpvConnectionError and marks us down.
+        path = self._mpv.try_get("path")  # raises MpvConnectionError if down
 
         filename = position = duration = None
         paused = None
 
-        if player is not None:
-            pid = player["playerid"]
-            props = self._kodi.call(
-                "Player.GetProperties",
-                playerid=pid,
-                properties=["time", "totaltime", "speed"],
-            ) or {}
-            position = seconds_from_time(props.get("time"))
-            duration = seconds_from_time(props.get("totaltime"))
-            paused = props.get("speed", 1) == 0
+        if path is not None:
+            filename = os.path.basename(path) or self._mpv.try_get("media-title")
+            position = self._mpv.try_get("time-pos")
+            duration = self._mpv.try_get("duration")
+            paused = bool(self._mpv.try_get("pause", False))
 
-            item = self._kodi.call(
-                "Player.GetItem", playerid=pid, properties=["file"]
-            ) or {}
-            item = item.get("item", {})
-            path = item.get("file")
-            filename = os.path.basename(path) if path else item.get("label")
-
-        app = self._kodi.call(
-            "Application.GetProperties", properties=["volume"]
-        ) or {}
-        volume = app.get("volume")
+        volume = self._mpv.try_get("volume")
+        if volume is not None:
+            volume = int(round(volume))
 
         with self._lock:
             self._state.update({
@@ -135,27 +114,21 @@ class PlayerStateManager:
     # -- helpers -----------------------------------------------------------
 
     def _play_playlist(self, files, start_index):
-        """Load `files` into Kodi's video playlist and start at start_index.
-        Kodi advances through them on its own from here on."""
-        self._kodi.call("Playlist.Clear", playlistid=VIDEO_PLAYLIST_ID)
-        for f in files:
-            self._kodi.call("Playlist.Add", playlistid=VIDEO_PLAYLIST_ID, item={"file": f})
-        self._kodi.call(
-            "Player.Open", item={"playlistid": VIDEO_PLAYLIST_ID, "position": start_index}
-        )
+        """Load `files` into mpv's playlist (folder order) and start at
+        start_index. mpv advances through them on its own from here on."""
+        # `loadfile ... replace` starts a fresh playlist with the first file;
+        # append the rest to rebuild the folder in order, then jump to the
+        # chosen entry so the playlist matches the folder exactly.
+        self._mpv.command("loadfile", files[0], "replace")
+        for f in files[1:]:
+            self._mpv.command("loadfile", f, "append")
+        if start_index > 0:
+            self._mpv.set_property("playlist-pos", start_index)
         self._apply_repeat()
 
     def _apply_repeat(self):
-        """Set Kodi's repeat mode on the active player to match keep-playing.
-        Retries briefly: right after Player.Open the player may not be active
-        for a beat."""
-        repeat = "all" if self._keep_playing else "off"
-        for _ in range(10):
-            pid = self._active_player_id()
-            if pid is not None:
-                self._kodi.call("Player.SetRepeat", playerid=pid, repeat=repeat)
-                return
-            time.sleep(0.2)
+        """Set mpv's playlist loop to match keep-playing."""
+        self._mpv.set_property("loop-playlist", "inf" if self._keep_playing else "no")
 
     # -- public command API (called from Flask routes) ---------------------
 
@@ -178,46 +151,31 @@ class PlayerStateManager:
         self._play_playlist(files, 0)
 
     def playpause(self):
-        pid = self._active_player_id()
-        if pid is not None:
-            self._kodi.call("Player.PlayPause", playerid=pid)
+        if self._has_media():
+            self._mpv.command("cycle", "pause")
 
     def next(self):
-        pid = self._active_player_id()
-        if pid is not None:
-            self._kodi.call("Player.GoTo", playerid=pid, to="next")
+        if self._has_media():
+            self._mpv.command("playlist-next", "weak")
 
     def previous(self):
-        pid = self._active_player_id()
-        if pid is not None:
-            self._kodi.call("Player.GoTo", playerid=pid, to="previous")
+        if self._has_media():
+            self._mpv.command("playlist-prev", "weak")
 
     def seek(self, offset_seconds):
-        pid = self._active_player_id()
-        if pid is not None:
-            # Kodi takes a relative jump as value={"seconds": N}.
-            self._kodi.call("Player.Seek", playerid=pid, value={"seconds": int(offset_seconds)})
+        if self._has_media():
+            self._mpv.command("seek", int(offset_seconds), "relative")
 
     def seek_to(self, position_seconds):
         """Seek to an absolute position (seconds from the start) -- used by the
         draggable progress bar."""
-        pid = self._active_player_id()
-        if pid is not None:
+        if self._has_media():
             pos = max(0, int(position_seconds))
-            self._kodi.call(
-                "Player.Seek",
-                playerid=pid,
-                value={"time": {
-                    "hours": pos // 3600,
-                    "minutes": (pos % 3600) // 60,
-                    "seconds": pos % 60,
-                    "milliseconds": 0,
-                }},
-            )
+            self._mpv.command("seek", pos, "absolute")
 
     def set_volume(self, value):
         value = max(0, min(100, value))
-        self._kodi.call("Application.SetVolume", volume=value)
+        self._mpv.set_property("volume", value)
 
     def set_keep_playing(self, enabled):
         with self._lock:

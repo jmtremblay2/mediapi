@@ -110,7 +110,7 @@
       const slider = el("seek-slider");
       slider.max = data.duration || 0;
       // Don't fight the user while they're dragging, or right after a seek
-      // (Kodi takes a beat to report the new position).
+      // (the player takes a beat to report the new position).
       if (!seeking && Date.now() > seekSuppressUntil) {
         slider.value = data.position || 0;
         el("time-pos").textContent = formatTime(data.position);

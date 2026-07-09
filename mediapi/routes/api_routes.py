@@ -1,6 +1,6 @@
 from flask import Blueprint, current_app, jsonify, request
 
-from ..kodi import KodiError
+from ..mpv import MpvError
 from ..media import PathError, list_directory, resolve_path
 
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -42,7 +42,7 @@ def play():
             player.play_folder(resolved)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except KodiError as exc:
+    except MpvError as exc:
         return jsonify({"error": f"player unavailable: {exc}"}), 503
 
     return jsonify({"ok": True})
@@ -52,7 +52,7 @@ def play():
 def playpause():
     try:
         current_app.player.playpause()
-    except KodiError as exc:
+    except MpvError as exc:
         return jsonify({"error": f"player unavailable: {exc}"}), 503
     return jsonify({"ok": True})
 
@@ -61,7 +61,7 @@ def playpause():
 def next_clip():
     try:
         current_app.player.next()
-    except KodiError as exc:
+    except MpvError as exc:
         return jsonify({"error": f"player unavailable: {exc}"}), 503
     return jsonify({"ok": True})
 
@@ -70,7 +70,7 @@ def next_clip():
 def previous_clip():
     try:
         current_app.player.previous()
-    except KodiError as exc:
+    except MpvError as exc:
         return jsonify({"error": f"player unavailable: {exc}"}), 503
     return jsonify({"ok": True})
 
@@ -85,7 +85,7 @@ def seek():
 
     try:
         current_app.player.seek(offset)
-    except KodiError as exc:
+    except MpvError as exc:
         return jsonify({"error": f"player unavailable: {exc}"}), 503
     return jsonify({"ok": True})
 
@@ -100,7 +100,7 @@ def seekto():
 
     try:
         current_app.player.seek_to(position)
-    except KodiError as exc:
+    except MpvError as exc:
         return jsonify({"error": f"player unavailable: {exc}"}), 503
     return jsonify({"ok": True})
 
@@ -115,7 +115,7 @@ def volume():
 
     try:
         current_app.player.set_volume(value)
-    except KodiError as exc:
+    except MpvError as exc:
         return jsonify({"error": f"player unavailable: {exc}"}), 503
     return jsonify({"ok": True})
 

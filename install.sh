@@ -45,7 +45,7 @@ TARGET_REF="${1:-}"
 # script can proceed, but make it loud: the defaults ship an insecure AP.
 if [[ ! -f .env ]]; then
   echo "WARNING: .env not found -- creating it from .env.example." >&2
-  echo "         Edit .env with your real AP/login/Kodi passwords, then re-run." >&2
+  echo "         Edit .env with your real AP/login passwords, then re-run." >&2
   cp .env.example .env
 fi
 set -a
@@ -116,7 +116,7 @@ bootstrap_system() {
 
 # --- render + install systemd units (used again on rollback) --------
 install_units() {
-  for unit in mediapi-kodi mediapi-app; do
+  for unit in mediapi-mpv mediapi-app; do
     sed -e "s|\${MEDIAPI_USER}|${MEDIAPI_USER}|g" \
         -e "s|\${PROJECT_DIR}|${PROJECT_DIR}|g" \
         -e "s|\${UV}|${UV}|g" \
@@ -140,7 +140,7 @@ deploy_current() {
     chmod 600 instance/secret_key
   fi
 
-  # Kodi (the player) runs as MEDIAPI_USER on GBM/KMS and needs these groups to
+  # mpv (the player) runs as MEDIAPI_USER on KMS/DRM and needs these groups to
   # reach the GPU/DRM, audio, input and console devices. Idempotent; systemd
   # picks up the new membership when it (re)starts the service below.
   if ! id -nG "${MEDIAPI_USER}" | tr ' ' '\n' | grep -qx render; then
@@ -148,10 +148,10 @@ deploy_current() {
     sudo usermod -aG video,render,input,audio,tty "${MEDIAPI_USER}"
   fi
 
-  # Install Kodi (the actual media player -- mediapi just drives it via JSON-RPC).
-  if ! command -v kodi-standalone >/dev/null 2>&1; then
-    echo "==> Installing Kodi ..."
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends kodi
+  # Install mpv (the actual media player -- mediapi drives it via its IPC socket).
+  if ! command -v mpv >/dev/null 2>&1; then
+    echo "==> Installing mpv ..."
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends mpv
   fi
 
   # Ensure the media browse roots exist so browsing works and there's a place to
@@ -184,36 +184,17 @@ deploy_current() {
 
   echo "==> Installing systemd units ..."
   install_units
-  sudo systemctl enable mediapi-kodi mediapi-app >/dev/null 2>&1 || true
-
-  # Enable Kodi's JSON-RPC web server so mediapi can control it. Kodi rewrites
-  # guisettings.xml on exit, so seed it while Kodi is stopped, then start.
-  KODI_HOME="$(eval echo "~${MEDIAPI_USER}")/.kodi"
-  echo "==> Enabling Kodi web server (JSON-RPC) on port ${MEDIAPI_KODI_PORT:-8090} ..."
-  sudo systemctl stop mediapi-kodi 2>/dev/null || true
-  sudo -u "${MEDIAPI_USER}" mkdir -p "${KODI_HOME}/userdata"
-  sudo -u "${MEDIAPI_USER}" \
-    MEDIAPI_KODI_PORT="${MEDIAPI_KODI_PORT:-8090}" \
-    MEDIAPI_KODI_USER="${MEDIAPI_KODI_USER:-kodi}" \
-    MEDIAPI_KODI_PASSWORD="${MEDIAPI_KODI_PASSWORD:-kodi}" \
-    python3 "${PROJECT_DIR}/scripts/configure-kodi.py" "${KODI_HOME}/userdata/guisettings.xml"
+  sudo systemctl enable mediapi-mpv mediapi-app >/dev/null 2>&1 || true
 
   echo "==> Starting services ..."
-  sudo systemctl restart mediapi-kodi
+  sudo systemctl restart mediapi-mpv
   sudo systemctl restart mediapi-app
 
-  # Route Kodi's audio to HDMI. Kodi otherwise defaults to the Pi's analog jack
-  # (bcm2835 Headphones). Done live over JSON-RPC once Kodi's web server is up
-  # (more robust than seeding guisettings, since Kodi validates the device).
-  local kodi_url="http://${MEDIAPI_KODI_USER:-kodi}:${MEDIAPI_KODI_PASSWORD:-kodi}@127.0.0.1:${MEDIAPI_KODI_PORT:-8090}/jsonrpc"
-  local audio_dev="${MEDIAPI_KODI_AUDIO_DEVICE:-ALSA:hdmi:CARD=vc4hdmi0,DEV=0|vc4-hdmi-0}"
-  echo "==> Setting Kodi audio output to HDMI ..."
+  # Wait for mpv's IPC socket so a first-run deploy leaves a driveable player.
+  echo "==> Waiting for mpv IPC socket (${MEDIAPI_MPV_SOCKET:-/run/mediapi/mpv.sock}) ..."
   for _ in $(seq 1 30); do
-    if curl -fsS --max-time 3 "$kodi_url" -H 'content-type: application/json' \
-         -d '{"jsonrpc":"2.0","id":1,"method":"JSONRPC.Ping"}' 2>/dev/null | grep -q pong; then
-      curl -fsS --max-time 5 "$kodi_url" -H 'content-type: application/json' \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"Settings.SetSettingValue\",\"params\":{\"setting\":\"audiooutput.audiodevice\",\"value\":\"${audio_dev}\"}}" >/dev/null \
-        && echo "    audio -> ${audio_dev}" || echo "    WARNING: could not set Kodi audio device"
+    if sudo test -S "${MEDIAPI_MPV_SOCKET:-/run/mediapi/mpv.sock}"; then
+      echo "    mpv is up."
       break
     fi
     sleep 1
@@ -240,7 +221,7 @@ echo "==> Health check on http://127.0.0.1:${MEDIAPI_PORT}/login ..."
 if app_healthy; then
   echo "$CURRENT_REF" > "$DEPLOYED_REF_FILE"
   echo "==> Deploy OK. $CURRENT_DESC healthy on port ${MEDIAPI_PORT}."
-  systemctl --no-pager --lines=0 status mediapi-kodi mediapi-app || true
+  systemctl --no-pager --lines=0 status mediapi-mpv mediapi-app || true
   exit 0
 fi
 

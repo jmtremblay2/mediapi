@@ -1,7 +1,7 @@
 [Unit]
 Description=MediaPi Flask app
-After=network-online.target mediapi-kodi.service
-Wants=network-online.target mediapi-kodi.service
+After=network-online.target mediapi-mpv.service
+Wants=network-online.target mediapi-mpv.service
 
 [Service]
 Type=simple
