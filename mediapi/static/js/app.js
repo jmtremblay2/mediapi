@@ -3,6 +3,8 @@
 
   let currentPath = null; // null = top-level media roots
   let volumeDebounce = null;
+  let seeking = false; // user is dragging the progress bar
+  let seekSuppressUntil = 0; // ignore poll updates briefly after a seek
 
   const el = (id) => document.getElementById(id);
 
@@ -102,12 +104,16 @@
       if (!online) return;
 
       el("now-playing").textContent = data.filename || "—";
-      el("time-pos").textContent = formatTime(data.position);
       el("time-dur").textContent = formatTime(data.duration);
 
       const slider = el("seek-slider");
       slider.max = data.duration || 0;
-      slider.value = data.position || 0;
+      // Don't fight the user while they're dragging, or right after a seek
+      // (Kodi takes a beat to report the new position).
+      if (!seeking && Date.now() > seekSuppressUntil) {
+        slider.value = data.position || 0;
+        el("time-pos").textContent = formatTime(data.position);
+      }
 
       if (document.activeElement !== el("volume-slider")) {
         el("volume-slider").value = data.volume || 0;
@@ -134,6 +140,20 @@
 
   el("btn-fwd30").addEventListener("click", () => {
     api("/api/control/seek", { method: "POST", body: JSON.stringify({ offset: 30 }) });
+  });
+
+  // Drag the progress bar to seek. 'input' fires while dragging (live label),
+  // 'change' fires on release (send the absolute seek).
+  el("seek-slider").addEventListener("input", (e) => {
+    seeking = true;
+    el("time-pos").textContent = formatTime(Number(e.target.value));
+  });
+
+  el("seek-slider").addEventListener("change", (e) => {
+    const pos = Number(e.target.value);
+    seeking = false;
+    seekSuppressUntil = Date.now() + 1200;
+    api("/api/control/seekto", { method: "POST", body: JSON.stringify({ position: pos }) });
   });
 
   el("volume-slider").addEventListener("input", (e) => {

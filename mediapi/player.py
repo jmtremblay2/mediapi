@@ -219,6 +219,23 @@ class PlayerStateManager:
             # Kodi takes a relative jump as value={"seconds": N}.
             self._kodi.call("Player.Seek", playerid=pid, value={"seconds": int(offset_seconds)})
 
+    def seek_to(self, position_seconds):
+        """Seek to an absolute position (seconds from the start) -- used by the
+        draggable progress bar."""
+        pid = self._active_player_id()
+        if pid is not None:
+            pos = max(0, int(position_seconds))
+            self._kodi.call(
+                "Player.Seek",
+                playerid=pid,
+                value={"time": {
+                    "hours": pos // 3600,
+                    "minutes": (pos % 3600) // 60,
+                    "seconds": pos % 60,
+                    "milliseconds": 0,
+                }},
+            )
+
     def set_volume(self, value):
         value = max(0, min(100, value))
         self._kodi.call("Application.SetVolume", volume=value)

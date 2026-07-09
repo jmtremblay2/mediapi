@@ -90,6 +90,21 @@ def seek():
     return jsonify({"ok": True})
 
 
+@bp.route("/control/seekto", methods=["POST"])
+def seekto():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        position = float(body.get("position"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "expected {position: seconds}"}), 400
+
+    try:
+        current_app.player.seek_to(position)
+    except KodiError as exc:
+        return jsonify({"error": f"player unavailable: {exc}"}), 503
+    return jsonify({"ok": True})
+
+
 @bp.route("/control/volume", methods=["POST"])
 def volume():
     body = request.get_json(force=True, silent=True) or {}
