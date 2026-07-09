@@ -5,6 +5,7 @@
   let volumeDebounce = null;
   let seeking = false; // user is dragging the progress bar
   let seekSuppressUntil = 0; // ignore poll updates briefly after a seek
+  let keepSuppressUntil = 0; // ignore poll updates briefly after toggling keep-playing
 
   const el = (id) => document.getElementById(id);
 
@@ -118,7 +119,9 @@
       if (document.activeElement !== el("volume-slider")) {
         el("volume-slider").value = data.volume || 0;
       }
-      el("keep-playing-checkbox").checked = !!data.keep_playing;
+      if (Date.now() > keepSuppressUntil) {
+        el("keep-playing-checkbox").checked = !!data.keep_playing;
+      }
     });
   }
 
@@ -165,6 +168,7 @@
   });
 
   el("keep-playing-checkbox").addEventListener("change", (e) => {
+    keepSuppressUntil = Date.now() + 1500;
     api("/api/control/keep-playing", {
       method: "POST",
       body: JSON.stringify({ enabled: e.target.checked }),

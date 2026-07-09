@@ -3,7 +3,7 @@ import os
 import threading
 import time
 
-from .kodi import KodiClient, KodiConnectionError, KodiError, seconds_from_time
+from .kodi import KodiConnectionError, KodiError, seconds_from_time
 from .media import list_video_files
 
 log = logging.getLogger(__name__)
@@ -11,12 +11,20 @@ log = logging.getLogger(__name__)
 POLL_INTERVAL = 1.0
 RECONNECT_INTERVAL = 2.0
 
+# Kodi's video playlist id (Playlist.GetPlaylists: 0=audio, 1=video, 2=picture).
+VIDEO_PLAYLIST_ID = 1
+
 
 class PlayerStateManager:
-    """Owns control of Kodi. A background thread polls Kodi's JSON-RPC for
-    playback state and drives "keep playing" auto-advance; Flask request
-    handlers only ever read the cached snapshot or send a command through this
-    class. Kodi itself does the decoding/output -- mediapi is just the remote.
+    """Controls Kodi over JSON-RPC and caches its playback state.
+
+    Playback is driven through Kodi's own PLAYLIST: playing a file or folder
+    loads the whole folder into Kodi's video playlist and starts it. Kodi then
+    advances through the folder (and loops it, when "keep playing" is on) ALL BY
+    ITSELF -- so playback keeps going even if this app, the phone, or the WiFi
+    disconnect. mediapi only issues commands and polls state; it is never in the
+    playback loop. Next/Previous are Kodi playlist navigation; "keep playing" is
+    Kodi's repeat mode.
     """
 
     def __init__(self, kodi_client, video_extensions):
@@ -26,6 +34,10 @@ class PlayerStateManager:
         self._lock = threading.Lock()
         self._stop = threading.Event()
 
+        # Desired repeat state. Default ON: a lean-back player (kids' videos in a
+        # car) should keep running through/looping the folder, not stop.
+        self._keep_playing = True
+
         self._state = {
             "connected": False,
             "filename": None,
@@ -33,14 +45,8 @@ class PlayerStateManager:
             "duration": None,
             "paused": None,
             "volume": None,
-            "keep_playing": False,
+            "keep_playing": True,
         }
-
-        # Auto-advance queue (the containing folder), same model as before.
-        self._queue_folder = None
-        self._queue_files = []
-        self._queue_index = -1
-        self._prev_playing = False
 
     def start(self):
         thread = threading.Thread(target=self._run, name="player-state-manager", daemon=True)
@@ -49,7 +55,7 @@ class PlayerStateManager:
     def stop(self):
         self._stop.set()
 
-    # -- background loop -------------------------------------------------
+    # -- background loop (status only; Kodi owns auto-advance) -------------
 
     def _run(self):
         while not self._stop.is_set():
@@ -76,12 +82,15 @@ class PlayerStateManager:
                 return p
         return players[0] if players else None
 
+    def _active_player_id(self):
+        player = self._active_player()
+        return player["playerid"] if player else None
+
     def _poll_once(self):
         player = self._active_player()  # raises KodiConnectionError if down
 
         filename = position = duration = None
         paused = None
-        playing = player is not None
 
         if player is not None:
             pid = player["playerid"]
@@ -106,11 +115,6 @@ class PlayerStateManager:
         ) or {}
         volume = app.get("volume")
 
-        # Auto-advance: playback just ended (was playing, now nothing active).
-        if self._prev_playing and not playing:
-            self._maybe_advance()
-        self._prev_playing = playing
-
         with self._lock:
             self._state.update({
                 "connected": True,
@@ -119,28 +123,8 @@ class PlayerStateManager:
                 "duration": duration,
                 "paused": paused,
                 "volume": volume,
+                "keep_playing": self._keep_playing,
             })
-
-    def _maybe_advance(self):
-        """Called from the poll loop when Kodi just went idle. If keep-playing
-        is on and there's a next file in the current folder queue, load it."""
-        with self._lock:
-            keep_playing = self._state["keep_playing"]
-            has_next = (
-                self._queue_files
-                and 0 <= self._queue_index + 1 < len(self._queue_files)
-            )
-            if keep_playing and has_next:
-                self._queue_index += 1
-                next_file = self._queue_files[self._queue_index]
-            else:
-                next_file = None
-
-        if next_file:
-            try:
-                self._open(next_file)
-            except KodiError as exc:
-                log.warning("auto-advance failed: %s", exc)
 
     # -- public read API ---------------------------------------------------
 
@@ -150,23 +134,34 @@ class PlayerStateManager:
 
     # -- helpers -----------------------------------------------------------
 
-    def _open(self, path):
-        self._kodi.call("Player.Open", item={"file": path})
-        # An Open means playback is starting, so treat the next idle as a real
-        # end-of-file (not the brief gap between stop and start).
-        self._prev_playing = True
+    def _play_playlist(self, files, start_index):
+        """Load `files` into Kodi's video playlist and start at start_index.
+        Kodi advances through them on its own from here on."""
+        self._kodi.call("Playlist.Clear", playlistid=VIDEO_PLAYLIST_ID)
+        for f in files:
+            self._kodi.call("Playlist.Add", playlistid=VIDEO_PLAYLIST_ID, item={"file": f})
+        self._kodi.call(
+            "Player.Open", item={"playlistid": VIDEO_PLAYLIST_ID, "position": start_index}
+        )
+        self._apply_repeat()
 
-    def _active_player_id(self):
-        player = self._active_player()
-        return player["playerid"] if player else None
+    def _apply_repeat(self):
+        """Set Kodi's repeat mode on the active player to match keep-playing.
+        Retries briefly: right after Player.Open the player may not be active
+        for a beat."""
+        repeat = "all" if self._keep_playing else "off"
+        for _ in range(10):
+            pid = self._active_player_id()
+            if pid is not None:
+                self._kodi.call("Player.SetRepeat", playerid=pid, repeat=repeat)
+                return
+            time.sleep(0.2)
 
     # -- public command API (called from Flask routes) ---------------------
 
     def play_file(self, path):
-        self._open(path)
-        # Build the auto-advance queue from the containing folder, positioned at
-        # the file just started -- so "keep playing" continues through the rest
-        # of the folder even when you start from the middle.
+        # Queue the whole containing folder so playback continues through the
+        # rest of it, starting at the chosen file.
         folder = os.path.dirname(path)
         files = list_video_files(folder, self.video_extensions)
         try:
@@ -174,44 +169,28 @@ class PlayerStateManager:
         except ValueError:
             files = [path]
             index = 0
-        with self._lock:
-            self._queue_folder = folder
-            self._queue_files = files
-            self._queue_index = index
+        self._play_playlist(files, index)
 
     def play_folder(self, folder_path):
         files = list_video_files(folder_path, self.video_extensions)
         if not files:
             raise ValueError(f"no video files in {folder_path}")
-        self._open(files[0])
-        with self._lock:
-            self._queue_folder = folder_path
-            self._queue_files = files
-            self._queue_index = 0
+        self._play_playlist(files, 0)
 
     def playpause(self):
         pid = self._active_player_id()
         if pid is not None:
             self._kodi.call("Player.PlayPause", playerid=pid)
 
-    def skip(self, delta):
-        """Jump to another clip in the current folder queue (+1 next, -1
-        previous). No-op at the ends, or when nothing is queued."""
-        with self._lock:
-            if not self._queue_files:
-                return
-            new_index = self._queue_index + delta
-            if new_index < 0 or new_index >= len(self._queue_files):
-                return
-            self._queue_index = new_index
-            target = self._queue_files[new_index]
-        self._open(target)
-
     def next(self):
-        self.skip(1)
+        pid = self._active_player_id()
+        if pid is not None:
+            self._kodi.call("Player.GoTo", playerid=pid, to="next")
 
     def previous(self):
-        self.skip(-1)
+        pid = self._active_player_id()
+        if pid is not None:
+            self._kodi.call("Player.GoTo", playerid=pid, to="previous")
 
     def seek(self, offset_seconds):
         pid = self._active_player_id()
@@ -242,4 +221,6 @@ class PlayerStateManager:
 
     def set_keep_playing(self, enabled):
         with self._lock:
-            self._state["keep_playing"] = bool(enabled)
+            self._keep_playing = bool(enabled)
+            self._state["keep_playing"] = self._keep_playing
+        self._apply_repeat()
