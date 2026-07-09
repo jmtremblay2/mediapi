@@ -1,26 +1,27 @@
 [Unit]
 Description=mpv video player (KMS/DRM -- the actual player)
-# Needs the DRM/HDMI + sound devices present; takes over the console VT.
+# Needs the DRM/HDMI + sound devices present.
 After=local-fs.target systemd-udev-settle.service sound.target
 Wants=systemd-udev-settle.service
+# Keep a login getty off the primary display so nothing else claims tty1.
 Conflicts=getty@tty1.service
 
 [Service]
 User=${MEDIAPI_USER}
-# mpv on DRM/KMS needs: video+render (GPU/DRM), input (remotes/keyboard), audio
-# (HDMI/ALSA), tty (own the VT). PAMName=login gives it a real logind session so
-# it can take the seat's DRM/input devices.
-SupplementaryGroups=video render input audio tty
-PAMName=login
-TTYPath=/dev/tty1
-StandardInput=tty
-StandardOutput=journal
-StandardError=journal
+# mpv on KMS/DRM needs: video+render (GPU/DRM), input (remotes/keyboard), audio
+# (HDMI/ALSA). It becomes DRM master simply as the first/only DRM client on the
+# seat -- no PAM login session and no elevated capabilities required, provided
+# nothing else is already holding the GPU. (An older Kodi-based deploy DID hold
+# it; install.sh tears any leftover Kodi down before starting this.)
+SupplementaryGroups=video render input audio
 # Create /run/mediapi (owned by this user) for the IPC socket the app connects to.
 RuntimeDirectory=mediapi
-# --idle keeps mpv running with no file loaded (holds the playlist between
-# clips and after the last one), so the service stays up and the app can always
-# reach the socket. Playback is hardware-decoded straight on KMS.
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+# --idle keeps mpv running with no file loaded (holds the playlist between clips
+# and after the last one), so the service stays up and the app can always reach
+# the socket. Playback renders straight on KMS.
 ExecStart=/usr/bin/mpv \
   --idle=yes \
   --input-ipc-server=/run/mediapi/mpv.sock \

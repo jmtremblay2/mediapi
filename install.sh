@@ -186,6 +186,20 @@ deploy_current() {
   install_units
   sudo systemctl enable mediapi-mpv mediapi-app >/dev/null 2>&1 || true
 
+  # Migration cleanup: earlier versions ran Kodi as the player. A still-running
+  # Kodi keeps the GPU's DRM master and the tty1 seat, which stops mpv from ever
+  # acquiring the display -- and removing a unit file does NOT stop an already
+  # running process. So explicitly tear any Kodi down before starting mpv.
+  if [[ -e /etc/systemd/system/mediapi-kodi.service ]] || pgrep -x kodi.bin >/dev/null 2>&1; then
+    echo "==> Removing leftover Kodi player ..."
+    sudo systemctl unmask mediapi-kodi.service 2>/dev/null || true
+    sudo systemctl disable --now mediapi-kodi.service 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/mediapi-kodi.service
+    sudo pkill -9 -x kodi.bin 2>/dev/null || true
+    sudo pkill -9 -f kodi-standalone 2>/dev/null || true
+    sudo systemctl daemon-reload
+  fi
+
   echo "==> Starting services ..."
   sudo systemctl restart mediapi-mpv
   sudo systemctl restart mediapi-app
