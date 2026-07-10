@@ -116,7 +116,7 @@ bootstrap_system() {
 
 # --- render + install systemd units (used again on rollback) --------
 install_units() {
-  for unit in mediapi-mpv mediapi-app; do
+  for unit in mediapi-mpv mediapi-app mediapi-watchdog; do
     sed -e "s|\${MEDIAPI_USER}|${MEDIAPI_USER}|g" \
         -e "s|\${PROJECT_DIR}|${PROJECT_DIR}|g" \
         -e "s|\${UV}|${UV}|g" \
@@ -184,7 +184,7 @@ deploy_current() {
 
   echo "==> Installing systemd units ..."
   install_units
-  sudo systemctl enable mediapi-mpv mediapi-app >/dev/null 2>&1 || true
+  sudo systemctl enable mediapi-mpv mediapi-app mediapi-watchdog >/dev/null 2>&1 || true
 
   # Migration cleanup: earlier versions ran Kodi as the player. A still-running
   # Kodi keeps the GPU's DRM master and the tty1 seat, which stops mpv from ever
@@ -203,6 +203,7 @@ deploy_current() {
   echo "==> Starting services ..."
   sudo systemctl restart mediapi-mpv
   sudo systemctl restart mediapi-app
+  sudo systemctl restart mediapi-watchdog
 
   # Wait for mpv's IPC socket so a first-run deploy leaves a driveable player.
   echo "==> Waiting for mpv IPC socket (${MEDIAPI_MPV_SOCKET:-/run/mediapi/mpv.sock}) ..."
@@ -235,7 +236,7 @@ echo "==> Health check on http://127.0.0.1:${MEDIAPI_PORT}/login ..."
 if app_healthy; then
   echo "$CURRENT_REF" > "$DEPLOYED_REF_FILE"
   echo "==> Deploy OK. $CURRENT_DESC healthy on port ${MEDIAPI_PORT}."
-  systemctl --no-pager --lines=0 status mediapi-mpv mediapi-app || true
+  systemctl --no-pager --lines=0 status mediapi-mpv mediapi-app mediapi-watchdog || true
   exit 0
 fi
 

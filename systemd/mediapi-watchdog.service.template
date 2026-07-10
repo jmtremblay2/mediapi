@@ -1,0 +1,15 @@
+[Unit]
+Description=MediaPi watchdog -- reboots the Pi if the mpv player wedges
+After=mediapi-mpv.service
+Wants=mediapi-mpv.service
+
+[Service]
+Type=simple
+# Runs as root (no User=): must be able to force a reboot, including via SysRq,
+# to recover a box whose player is wedged in uninterruptible D-state.
+ExecStart=${PROJECT_DIR}/scripts/mediapi-watchdog.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
